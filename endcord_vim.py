@@ -170,7 +170,7 @@ class Extension:
             elif tui.win_member_list:
                 if tui.mlist_selected + 1 < len(tui.member_list):
                     top_line = tui.mlist_index + tui.win_member_list.getmaxyx()[0] - 1
-                    if top_line < tui.member_list and tui.mlist_selected >= top_line - 1:
+                    if top_line < len(tui.member_list) and tui.mlist_selected >= top_line - 1:
                         tui.mlist_index += 1
                     tui.mlist_selected += 1
                     tui.draw_member_list(tui.member_list, tui.member_list_format)
