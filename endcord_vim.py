@@ -8,14 +8,16 @@
 import logging
 
 EXT_NAME = "Vim Count Navigation"
-EXT_VERSION = "0.1.0"
+EXT_VERSION = "0.2.0"
 EXT_ENDCORD_VERSION = "1.4.2"
-EXT_DESCRIPTION = "Count-prefix vim navigation: type a number before j/k (chat) or J/K (channel tree) to move N steps."
+EXT_DESCRIPTION = "Count-prefix vim navigation: type a number before j/k (chat) or J/K (channel tree) to move N steps. Ctrl+U/D scroll half-page."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
 
 logger = logging.getLogger(__name__)
 
 _VIM_DIGIT_CODE = 1001   # action code returned when a digit is absorbed into vim_count
+_CTRL_U = 21
+_CTRL_D = 4
 
 
 class Extension:
@@ -174,6 +176,25 @@ class Extension:
                         tui.mlist_index += 1
                     tui.mlist_selected += 1
                     tui.draw_member_list(tui.member_list, tui.member_list_format)
+
+        elif key == _CTRL_U and not tui.insert_mode:
+            half = tui.chat_hw[0] // 2
+            if tui.chat_selected < 0:
+                tui.chat_selected = 0
+            delta = min(half, len(tui.chat_buffer) - 1 - tui.chat_selected)
+            if delta > 0:
+                tui.chat_selected += delta
+                tui.chat_index = min(tui.chat_index + delta, len(tui.chat_buffer) - tui.chat_hw[0] + 2)
+                tui.chat_index = max(tui.chat_index, 0)
+                tui.draw_chat()
+
+        elif key == _CTRL_D and not tui.insert_mode:
+            half = tui.chat_hw[0] // 2
+            if tui.chat_selected > 0:
+                delta = min(half, tui.chat_selected)
+                tui.chat_selected -= delta
+                tui.chat_index = max(tui.chat_index - delta, 0)
+                tui.draw_chat()
 
         elif key in tui.keybindings["quit"]:
             return 34
