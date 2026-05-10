@@ -3,14 +3,14 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, version 3.
 
-"""Vim navigation: count-prefix j/k/J/K, Ctrl+U/D half-page, zt/zz/zb reposition, m/'/` marks, e/b/w word motion."""
+"""Vim navigation: count-prefix j/k/J/K, Ctrl+U/D half-page, zt/zz/zb reposition, m/'/` marks, e/b/w/$//^ word motion, d operator."""
 
 import json
 import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.11.0"
+EXT_VERSION = "0.12.0"
 EXT_ENDCORD_VERSION = "1.4.2"
 EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
@@ -125,6 +125,64 @@ class Extension:
                 collapsed.append(obj["id"])
         app.update_tree(collapsed=collapsed)
 
+    # ── input word-motion helpers ─────────────────────────────────────────────
+
+    def _word_forward(self, buf, idx):
+        """Vim 'w': skip current word chars, then skip spaces → start of next word."""
+        while idx < len(buf) and buf[idx] != ' ':
+            idx += 1
+        while idx < len(buf) and buf[idx] == ' ':
+            idx += 1
+        return idx
+
+    def _word_backward(self, buf, idx):
+        """Vim 'b': go to start of current or previous word (matches tui.py word_left)."""
+        left_len = 0
+        for word in buf[:idx].split(" ")[::-1]:
+            if word == "":
+                left_len += 1
+            else:
+                left_len += len(word)
+                break
+        return max(0, idx - left_len)
+
+    def _word_end(self, buf, idx):
+        """Vim 'e': go to end of current word, or end of next word if already at end."""
+        if idx < len(buf):
+            if idx + 1 >= len(buf) or buf[idx + 1] == ' ' or buf[idx] == ' ':
+                idx += 1
+            while idx < len(buf) and buf[idx] == ' ':
+                idx += 1
+            while idx + 1 < len(buf) and buf[idx + 1] != ' ':
+                idx += 1
+        return idx
+
+    def _apply_input_motion(self, tui, new_idx):
+        """Set cursor to new_idx, update scroll + cursor_pos, and redraw input."""
+        buf = tui.input_buffer
+        _, w = tui.input_hw
+        tui.input_index = new_idx
+        # clamp scroll to valid range for current buffer (important after deletion)
+        tui.input_line_index = max(0, min(tui.input_line_index, max(0, len(buf) - w)))
+        # scroll right if cursor is past the right edge
+        diff_r = tui.input_index - max(0, len(buf) - w - tui.input_line_index) - w
+        if diff_r >= 0:
+            tui.input_line_index -= diff_r + 4
+            tui.input_line_index = min(max(0, tui.input_line_index), max(0, len(buf) - w))
+        # scroll left if cursor is before the left edge
+        diff_l = tui.input_index - max(0, len(buf) - w + 1 - tui.input_line_index)
+        if diff_l <= 0:
+            tui.input_line_index -= diff_l - 4
+            tui.input_line_index = min(max(0, tui.input_line_index), max(0, len(buf) - w))
+        tui.cursor_pos = tui.input_index - max(0, len(buf) - w + 1 - tui.input_line_index)
+        tui.cursor_pos = max(0, tui.cursor_pos)
+        tui.cursor_pos = min(w - 1, tui.cursor_pos)
+        tui.input_select_start = None
+        tui.spellcheck()
+        tui.draw_input_line()
+
+    # ── mark set / jump ───────────────────────────────────────────────────────
+
     def _switch_to_mark_channel(self, mark):
         """Switch to the channel stored in a global mark if not already there."""
         app = self.app
@@ -194,10 +252,8 @@ class Extension:
 
     def on_wait_input(self, action_code, input_text, chat_sel, tree_sel):
         """Keep the input loop running after a digit or handled scroll."""
-        if action_code == _VIM_DIGIT_CODE:
+        if action_code in (_VIM_DIGIT_CODE, _VIM_SCROLL_CODE):
             self.restore_input_text = (input_text, "standard")
-            return True
-        if action_code == _VIM_SCROLL_CODE:
             return True
 
     # ── keybindings replacement ───────────────────────────────────────────────
@@ -415,24 +471,63 @@ class Extension:
                 self._jump_mark_exact(chr(next_key))
             return _VIM_SCROLL_CODE
 
+        elif key in tui.keybindings["word_right"] and not tui.insert_mode:
+            # override tui.py's word_right to land on start of next word (not the space before it)
+            buf = tui.input_buffer
+            self._apply_input_motion(tui, self._word_forward(buf, tui.input_index))
+            return _VIM_SCROLL_CODE
+
         elif key == ord('e') and not tui.insert_mode:
             buf = tui.input_buffer
-            idx = tui.input_index
-            w = tui.input_hw[1]
-            if idx < len(buf):
-                if idx + 1 >= len(buf) or buf[idx + 1] == ' ' or buf[idx] == ' ':
-                    idx += 1
-                while idx < len(buf) and buf[idx] == ' ':
-                    idx += 1
-                while idx + 1 < len(buf) and buf[idx + 1] != ' ':
-                    idx += 1
-            tui.input_index = min(idx, len(buf))
-            input_line_index_diff = tui.input_index - max(0, len(buf) - w - tui.input_line_index) - w
-            if input_line_index_diff >= 0:
-                tui.input_line_index -= input_line_index_diff + 4
-                tui.input_line_index = min(max(0, tui.input_line_index), max(0, len(buf) - w))
-            tui.input_select_start = None
-            tui.spellcheck()
+            self._apply_input_motion(tui, self._word_end(buf, tui.input_index))
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('$') and not tui.insert_mode:
+            self._apply_input_motion(tui, len(tui.input_buffer))
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('^') and not tui.insert_mode:
+            buf = tui.input_buffer
+            idx = 0
+            while idx < len(buf) and buf[idx] == ' ':
+                idx += 1
+            self._apply_input_motion(tui, idx)
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('d') and not tui.insert_mode:
+            tui.screen.timeout(-1)
+            next_key = tui.screen.getch()
+            tui.screen.timeout(200)
+            # optional inner count (e.g. d2w)
+            inner_count = 0
+            while ord('1') <= next_key <= ord('9') or (next_key == ord('0') and inner_count > 0):
+                inner_count = inner_count * 10 + (next_key - ord('0'))
+                tui.screen.timeout(-1)
+                next_key = tui.screen.getch()
+                tui.screen.timeout(200)
+            n = count * max(1, inner_count)
+            buf = tui.input_buffer
+            start = tui.input_index
+            end = start
+            for _ in range(n):
+                if next_key in tui.keybindings["word_right"] or next_key == ord('w'):
+                    end = self._word_forward(buf, end)
+                elif next_key in tui.keybindings["word_left"] or next_key == ord('b'):
+                    end = self._word_backward(buf, end)
+                elif next_key == ord('e'):
+                    end = self._word_end(buf, end)
+                else:
+                    break
+            if next_key == ord('$'):
+                end = len(buf)
+            elif next_key == ord('^'):
+                end = 0
+                while end < len(buf) and buf[end] == ' ':
+                    end += 1
+            if end != start:
+                lo, hi = min(start, end), max(start, end)
+                tui.input_buffer = buf[:lo] + buf[hi:]
+                self._apply_input_motion(tui, lo)
             return _VIM_SCROLL_CODE
 
         elif key == _CTRL_U and not tui.insert_mode:
