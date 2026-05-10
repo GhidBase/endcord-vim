@@ -253,7 +253,7 @@ class Extension:
     def on_wait_input(self, action_code, input_text, chat_sel, tree_sel):
         """Keep the input loop running after a digit or handled scroll."""
         if action_code in (_VIM_DIGIT_CODE, _VIM_SCROLL_CODE):
-            self.restore_input_text = (input_text, "standard")
+            self.app.restore_input_text = (input_text, "standard")
             return True
 
     # ── keybindings replacement ───────────────────────────────────────────────
