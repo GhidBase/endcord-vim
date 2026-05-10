@@ -3,14 +3,14 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, version 3.
 
-"""Vim navigation: count-prefix j/k/J/K, Ctrl+U/D half-page, zt/zz/zb reposition, m/'/` marks."""
+"""Vim navigation: count-prefix j/k/J/K, Ctrl+U/D half-page, zt/zz/zb reposition, m/'/` marks, e/b/w word motion."""
 
 import json
 import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.10.0"
+EXT_VERSION = "0.11.0"
 EXT_ENDCORD_VERSION = "1.4.2"
 EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
@@ -413,6 +413,26 @@ class Extension:
             tui.screen.timeout(200)
             if 97 <= next_key <= 122 or 65 <= next_key <= 90:
                 self._jump_mark_exact(chr(next_key))
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('e') and not tui.insert_mode:
+            buf = tui.input_buffer
+            idx = tui.input_index
+            w = tui.input_hw[1]
+            if idx < len(buf):
+                if idx + 1 >= len(buf) or buf[idx + 1] == ' ' or buf[idx] == ' ':
+                    idx += 1
+                while idx < len(buf) and buf[idx] == ' ':
+                    idx += 1
+                while idx + 1 < len(buf) and buf[idx + 1] != ' ':
+                    idx += 1
+            tui.input_index = min(idx, len(buf))
+            input_line_index_diff = tui.input_index - max(0, len(buf) - w - tui.input_line_index) - w
+            if input_line_index_diff >= 0:
+                tui.input_line_index -= input_line_index_diff + 4
+                tui.input_line_index = min(max(0, tui.input_line_index), max(0, len(buf) - w))
+            tui.input_select_start = None
+            tui.spellcheck()
             return _VIM_SCROLL_CODE
 
         elif key == _CTRL_U and not tui.insert_mode:
