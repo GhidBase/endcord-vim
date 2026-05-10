@@ -540,6 +540,8 @@ class Extension:
             return _VIM_SCROLL_CODE
 
         elif key == ord('a') and not tui.insert_mode:
+            if tui.input_index >= len(tui.input_buffer):
+                tui.input_buffer += ' '
             idx = min(tui.input_index + 1, len(tui.input_buffer))
             self._apply_input_motion(tui, idx)
             tui.insert_mode = True
