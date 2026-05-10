@@ -3,21 +3,25 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, version 3.
 
-"""Adds count-prefix vim navigation: type a number then j/k/J/K to move N steps."""
+"""Vim navigation: count-prefix j/k/J/K, Ctrl+U/D half-page, zt/zz/zb reposition, m/'/` marks."""
 
+import json
 import logging
+import os
 
-EXT_NAME = "Vim Count Navigation"
-EXT_VERSION = "0.2.0"
+EXT_NAME = "Vim Navigation"
+EXT_VERSION = "0.6.0"
 EXT_ENDCORD_VERSION = "1.4.2"
-EXT_DESCRIPTION = "Count-prefix vim navigation: type a number before j/k (chat) or J/K (channel tree) to move N steps. Ctrl+U/D scroll half-page."
+EXT_DESCRIPTION = "Vim-style navigation: count prefix, half-page scroll, zt/zz/zb, persistent marks (m/'/`)."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
 
 logger = logging.getLogger(__name__)
 
 _VIM_DIGIT_CODE = 1001   # action code returned when a digit is absorbed into vim_count
+_VIM_SCROLL_CODE = 1002  # action code returned when a handled key should not propagate
 _CTRL_U = 21
 _CTRL_D = 4
+_MARKS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vim_marks.json")
 
 
 class Extension:
@@ -25,11 +29,133 @@ class Extension:
         self.app = app
         app.tui.vim_count = 0
         app.tui.common_keybindings = self._common_keybindings
-        logger.info("Vim count navigation active")
+        self._marks = self._load_marks()
+        logger.info("Vim navigation active")
+
+    # ── marks persistence ────────────────────────────────────────────────────
+
+    def _load_marks(self):
+        try:
+            with open(_MARKS_FILE, "r") as f:
+                data = json.load(f)
+            if "local" not in data:
+                data["local"] = {}
+            if "global" not in data:
+                data["global"] = {}
+            return data
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"local": {}, "global": {}}
+
+    def _save_marks(self):
+        try:
+            with open(_MARKS_FILE, "w") as f:
+                json.dump(self._marks, f, indent=2)
+        except OSError as e:
+            logger.error(f"vim marks: could not save: {e}")
+
+    # ── mark set / jump ───────────────────────────────────────────────────────
+
+    def _set_mark(self, letter):
+        app = self.app
+        chat_sel = app.tui.chat_selected
+        if chat_sel < 0 or not app.messages:
+            app.update_extra_line("vim: no message selected for mark", timed=True)
+            return
+        msg_index = app.lines_to_msg(chat_sel)
+        if msg_index is None:
+            app.update_extra_line("vim: cursor not on a message", timed=True)
+            return
+        message_id = app.messages[msg_index]["id"]
+
+        if letter.islower():
+            channel_id = str(app.active_channel["channel_id"])
+            if channel_id not in self._marks["local"]:
+                self._marks["local"][channel_id] = {}
+            self._marks["local"][channel_id][letter] = message_id
+        else:
+            self._marks["global"][letter] = {
+                "channel_id": str(app.active_channel["channel_id"]),
+                "channel_name": app.active_channel["channel_name"],
+                "guild_id": str(app.active_channel["guild_id"]),
+                "guild_name": app.active_channel["guild_name"],
+                "message_id": message_id,
+            }
+        self._save_marks()
+        app.update_extra_line(f"vim: mark '{letter}' set", timed=True)
+
+    def _scroll_to_message(self, message_id):
+        app = self.app
+        tui = app.tui
+        msg_index = next(
+            (i for i, m in enumerate(app.messages) if m.get("id") == message_id),
+            None,
+        )
+        if msg_index is None:
+            return
+        target_line = next(
+            (i for i, lm in enumerate(app.chat_map) if lm and lm[0] == msg_index),
+            None,
+        )
+        if target_line is None:
+            return
+        tui.chat_selected = target_line
+        h = tui.chat_hw[0]
+        max_idx = len(tui.chat_buffer) - h + 2
+        tui.chat_index = max(0, min(target_line - h + 1 + h // 2, max_idx))
+        tui.draw_chat()
+
+    def _switch_to_mark_channel(self, mark):
+        """Switch to the channel stored in a global mark if not already there."""
+        app = self.app
+        if str(mark["channel_id"]) != str(app.active_channel["channel_id"]):
+            app.switch_channel(
+                mark["channel_id"], mark["channel_name"],
+                mark["guild_id"], mark["guild_name"],
+            )
+            app.reset_states(replying=True)
+            app.update_status_line()
+
+    def _jump_mark_bottom(self, letter):
+        """' + letter: go to the channel the mark is in and scroll to bottom."""
+        app = self.app
+        if letter.islower():
+            channel_id = str(app.active_channel["channel_id"])
+            if not self._marks["local"].get(channel_id, {}).get(letter):
+                app.update_extra_line(f"vim: mark '{letter}' not set", timed=True)
+                return
+            app.tui.scroll_bot()
+        else:
+            mark = self._marks["global"].get(letter)
+            if not mark:
+                app.update_extra_line(f"vim: mark '{letter}' not set", timed=True)
+                return
+            self._switch_to_mark_channel(mark)
+            app.tui.scroll_bot()
+
+    def _jump_mark_exact(self, letter):
+        """` + letter: jump to the exact message the mark is on."""
+        app = self.app
+        if letter.islower():
+            channel_id = str(app.active_channel["channel_id"])
+            message_id = self._marks["local"].get(channel_id, {}).get(letter)
+            if not message_id:
+                app.update_extra_line(f"vim: mark '{letter}' not set", timed=True)
+                return
+            self._scroll_to_message(message_id)
+        else:
+            mark = self._marks["global"].get(letter)
+            if not mark:
+                app.update_extra_line(f"vim: mark '{letter}' not set", timed=True)
+                return
+            self._switch_to_mark_channel(mark)
+            self._scroll_to_message(mark["message_id"])
+
+    # ── extension hooks ───────────────────────────────────────────────────────
 
     def on_binding(self, key, is_command, is_forum):
-        """Absorb digit keypresses in normal mode into vim_count."""
+        """Absorb digit keypresses into vim_count; remap u to upload."""
         tui = self.app.tui
+
         if (not tui.insert_mode
                 and tui.switch_tab_modifier
                 and isinstance(key, int)
@@ -37,17 +163,26 @@ class Extension:
             tui.vim_count = min(tui.vim_count * 10 + (key - 48), 999)
             return _VIM_DIGIT_CODE
 
+        if not tui.insert_mode and key == ord('u') and not is_forum:
+            tui.enable_autocomplete = True
+            tui.misspelled = []
+            return 13   # upload action code
+
     def on_escape_key(self):
         self.app.tui.vim_count = 0
 
     def on_wait_input(self, action_code, input_text, chat_sel, tree_sel):
-        """Keep the input loop running after a digit is absorbed."""
+        """Keep the input loop running after a digit or handled scroll."""
         if action_code == _VIM_DIGIT_CODE:
             self.restore_input_text = (input_text, "standard")
             return True
+        if action_code == _VIM_SCROLL_CODE:
+            return True
+
+    # ── keybindings replacement ───────────────────────────────────────────────
 
     def _common_keybindings(self, key, mouse=False, switch=False, command=False, forum=False):
-        """Replacement for tui.common_keybindings that reads vim_count at the top."""
+        """Replacement for tui.common_keybindings with vim_count and extra bindings."""
         tui = self.app.tui
         count = max(1, tui.vim_count)
         tui.vim_count = 0
@@ -177,6 +312,47 @@ class Extension:
                     tui.mlist_selected += 1
                     tui.draw_member_list(tui.member_list, tui.member_list_format)
 
+        elif key == ord('z') and not tui.insert_mode:
+            tui.screen.timeout(-1)
+            next_key = tui.screen.getch()
+            tui.screen.timeout(200)
+            if tui.chat_selected >= 0 and next_key in (ord('t'), ord('z'), ord('b')):
+                sel = tui.chat_selected
+                h = tui.chat_hw[0]
+                max_idx = len(tui.chat_buffer) - h + 2
+                if next_key == ord('t'):
+                    tui.chat_index = max(0, min(sel - h + 1, max_idx))
+                elif next_key == ord('z'):
+                    tui.chat_index = max(0, min(sel - h + 1 + h // 2, max_idx))
+                elif next_key == ord('b'):
+                    tui.chat_index = max(0, min(sel, max_idx))
+                tui.draw_chat()
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('m') and not tui.insert_mode:
+            tui.screen.timeout(-1)
+            next_key = tui.screen.getch()
+            tui.screen.timeout(200)
+            if 97 <= next_key <= 122 or 65 <= next_key <= 90:
+                self._set_mark(chr(next_key))
+            return _VIM_SCROLL_CODE
+
+        elif key == ord("'") and not tui.insert_mode:
+            tui.screen.timeout(-1)
+            next_key = tui.screen.getch()
+            tui.screen.timeout(200)
+            if 97 <= next_key <= 122 or 65 <= next_key <= 90:
+                self._jump_mark_bottom(chr(next_key))
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('`') and not tui.insert_mode:
+            tui.screen.timeout(-1)
+            next_key = tui.screen.getch()
+            tui.screen.timeout(200)
+            if 97 <= next_key <= 122 or 65 <= next_key <= 90:
+                self._jump_mark_exact(chr(next_key))
+            return _VIM_SCROLL_CODE
+
         elif key == _CTRL_U and not tui.insert_mode:
             half = tui.chat_hw[0] // 2
             if tui.chat_selected < 0:
@@ -187,6 +363,7 @@ class Extension:
                 tui.chat_index = min(tui.chat_index + delta, len(tui.chat_buffer) - tui.chat_hw[0] + 2)
                 tui.chat_index = max(tui.chat_index, 0)
                 tui.draw_chat()
+            return _VIM_SCROLL_CODE
 
         elif key == _CTRL_D and not tui.insert_mode:
             half = tui.chat_hw[0] // 2
@@ -195,6 +372,7 @@ class Extension:
                 tui.chat_selected -= delta
                 tui.chat_index = max(tui.chat_index - delta, 0)
                 tui.draw_chat()
+            return _VIM_SCROLL_CODE
 
         elif key in tui.keybindings["quit"]:
             return 34
