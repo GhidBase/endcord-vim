@@ -10,7 +10,7 @@ import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.8.0"
+EXT_VERSION = "0.9.0"
 EXT_ENDCORD_VERSION = "1.4.2"
 EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
@@ -103,6 +103,14 @@ class Extension:
         max_idx = len(tui.chat_buffer) - h + 2
         tui.chat_index = max(0, min(target_line - h + 1 + h // 2, max_idx))
         tui.draw_chat()
+
+    def _collapse_all(self):
+        app = self.app
+        collapsed = [0] if 0 in app.state["collapsed"] else []
+        for obj in app.tree_metadata:
+            if obj and obj["type"] < 0 and obj["id"] not in collapsed:
+                collapsed.append(obj["id"])
+        app.update_tree(collapsed=collapsed)
 
     def _switch_to_mark_channel(self, mark):
         """Switch to the channel stored in a global mark if not already there."""
@@ -366,6 +374,8 @@ class Extension:
                         else:
                             break
                     tui.draw_tree()
+                elif next_key == ord('C'):
+                    self._collapse_all()
             return _VIM_SCROLL_CODE
 
         elif key == ord('m') and not tui.insert_mode:
