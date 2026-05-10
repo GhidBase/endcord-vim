@@ -10,9 +10,9 @@ import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.6.0"
+EXT_VERSION = "0.7.0"
 EXT_ENDCORD_VERSION = "1.4.2"
-EXT_DESCRIPTION = "Vim-style navigation: count prefix, half-page scroll, zt/zz/zb, persistent marks (m/'/`)."
+EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
 
 logger = logging.getLogger(__name__)
@@ -329,6 +329,23 @@ class Extension:
                 tui.draw_chat()
             return _VIM_SCROLL_CODE
 
+        elif key == ord('Z') and not tui.insert_mode:
+            tui.screen.timeout(-1)
+            next_key = tui.screen.getch()
+            tui.screen.timeout(200)
+            if tui.tree_selected >= 0 and next_key in (ord('T'), ord('Z'), ord('B')):
+                sel = tui.tree_selected
+                h = tui.tree_hw[0]
+                max_idx = max(0, tui.tree_clean_len - h)
+                if next_key == ord('T'):
+                    tui.tree_index = max(0, min(sel, max_idx))
+                elif next_key == ord('Z'):
+                    tui.tree_index = max(0, min(sel - h // 2, max_idx))
+                elif next_key == ord('B'):
+                    tui.tree_index = max(0, min(sel - h + 1, max_idx))
+                tui.draw_tree()
+            return _VIM_SCROLL_CODE
+
         elif key == ord('m') and not tui.insert_mode:
             tui.screen.timeout(-1)
             next_key = tui.screen.getch()
@@ -354,24 +371,45 @@ class Extension:
             return _VIM_SCROLL_CODE
 
         elif key == _CTRL_U and not tui.insert_mode:
-            half = tui.chat_hw[0] // 2
             if tui.chat_selected < 0:
-                tui.chat_selected = 0
-            delta = min(half, len(tui.chat_buffer) - 1 - tui.chat_selected)
-            if delta > 0:
-                tui.chat_selected += delta
-                tui.chat_index = min(tui.chat_index + delta, len(tui.chat_buffer) - tui.chat_hw[0] + 2)
-                tui.chat_index = max(tui.chat_index, 0)
-                tui.draw_chat()
+                half = tui.tree_hw[0] // 2
+                for _ in range(half):
+                    if tui.tree_selected > 0:
+                        if tui.tree_index and tui.tree_selected <= tui.tree_index + 2:
+                            tui.tree_index -= 1
+                        tui.tree_selected -= 1
+                    else:
+                        break
+                tui.draw_tree()
+            else:
+                half = tui.chat_hw[0] // 2
+                delta = min(half, len(tui.chat_buffer) - 1 - tui.chat_selected)
+                if delta > 0:
+                    tui.chat_selected += delta
+                    tui.chat_index = min(tui.chat_index + delta, len(tui.chat_buffer) - tui.chat_hw[0] + 2)
+                    tui.chat_index = max(tui.chat_index, 0)
+                    tui.draw_chat()
             return _VIM_SCROLL_CODE
 
         elif key == _CTRL_D and not tui.insert_mode:
-            half = tui.chat_hw[0] // 2
-            if tui.chat_selected > 0:
-                delta = min(half, tui.chat_selected)
-                tui.chat_selected -= delta
-                tui.chat_index = max(tui.chat_index - delta, 0)
-                tui.draw_chat()
+            if tui.chat_selected < 0:
+                half = tui.tree_hw[0] // 2
+                for _ in range(half):
+                    if tui.tree_selected + 1 < tui.tree_clean_len:
+                        top_line = tui.tree_index + tui.tree_hw[0]
+                        if top_line < tui.tree_clean_len and tui.tree_selected >= top_line - 3:
+                            tui.tree_index += 1
+                        tui.tree_selected += 1
+                    else:
+                        break
+                tui.draw_tree()
+            else:
+                half = tui.chat_hw[0] // 2
+                if tui.chat_selected > 0:
+                    delta = min(half, tui.chat_selected)
+                    tui.chat_selected -= delta
+                    tui.chat_index = max(tui.chat_index - delta, 0)
+                    tui.draw_chat()
             return _VIM_SCROLL_CODE
 
         elif key in tui.keybindings["quit"]:
