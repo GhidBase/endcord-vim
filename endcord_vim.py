@@ -10,7 +10,7 @@ import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.12.0"
+EXT_VERSION = "0.13.0"
 EXT_ENDCORD_VERSION = "1.4.2"
 EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
@@ -529,6 +529,21 @@ class Extension:
                 tui.input_buffer = buf[:lo] + buf[hi:]
                 self._apply_input_motion(tui, lo)
             return _VIM_SCROLL_CODE
+
+        elif key == ord('x') and not tui.insert_mode:
+            buf = tui.input_buffer
+            idx = tui.input_index
+            if idx < len(buf):
+                end = min(idx + count, len(buf))
+                tui.input_buffer = buf[:idx] + buf[end:]
+                self._apply_input_motion(tui, min(idx, len(tui.input_buffer)))
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('a') and not tui.insert_mode:
+            idx = min(tui.input_index + 1, len(tui.input_buffer))
+            self._apply_input_motion(tui, idx)
+            tui.insert_mode = True
+            return 28
 
         elif key == _CTRL_U and not tui.insert_mode:
             half = tui.chat_hw[0] // 2
