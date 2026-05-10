@@ -10,7 +10,7 @@ import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.9.0"
+EXT_VERSION = "0.10.0"
 EXT_ENDCORD_VERSION = "1.4.2"
 EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
@@ -103,6 +103,19 @@ class Extension:
         max_idx = len(tui.chat_buffer) - h + 2
         tui.chat_index = max(0, min(target_line - h + 1 + h // 2, max_idx))
         tui.draw_chat()
+
+    def _skip_image_placeholders(self, tui, direction):
+        """After a scroll lands on blank image placeholder lines, walk direction until a real line."""
+        chat_map = self.app.chat_map
+        buf = tui.chat_buffer
+        limit = len(buf)
+        max_idx = limit - tui.chat_hw[0] + 2
+        while 0 <= tui.chat_selected < limit:
+            lm = chat_map[tui.chat_selected] if tui.chat_selected < len(chat_map) else None
+            if lm is not None or (tui.chat_selected < limit and buf[tui.chat_selected].strip()):
+                break  # real message line or date separator — stop
+            tui.chat_selected += direction
+            tui.chat_index = max(0, min(tui.chat_index + direction, max_idx))
 
     def _collapse_all(self):
         app = self.app
@@ -411,6 +424,7 @@ class Extension:
                 tui.chat_selected += delta
                 tui.chat_index = min(tui.chat_index + delta, len(tui.chat_buffer) - tui.chat_hw[0] + 2)
                 tui.chat_index = max(tui.chat_index, 0)
+                self._skip_image_placeholders(tui, +1)
                 tui.draw_chat()
             return _VIM_SCROLL_CODE
 
@@ -420,6 +434,7 @@ class Extension:
                 delta = min(half, tui.chat_selected)
                 tui.chat_selected -= delta
                 tui.chat_index = max(tui.chat_index - delta, 0)
+                self._skip_image_placeholders(tui, -1)
                 tui.draw_chat()
             return _VIM_SCROLL_CODE
 
