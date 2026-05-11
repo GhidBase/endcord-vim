@@ -91,7 +91,8 @@ Ctrl+U/D skip over blank image placeholder lines inserted by image extensions.
 | `d^` | Delete to first non-space character |
 | `diw` | Delete inner word (word chars only, no surrounding spaces) |
 | `daw` | Delete a word (word + one adjacent space) |
-| `dd` | Delete the selected message |
+| `dd` | Delete all text in the input buffer |
+| `dm` | Delete the selected message (triggers endcord's confirmation prompt) |
 
 **Count with `d`:** place a count before `d`, after `d`, or both — they multiply.  
 Examples: `2dw`, `d3w`, `2d3w` (deletes 6 words).
