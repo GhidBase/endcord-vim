@@ -11,7 +11,7 @@ import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.15.0"
+EXT_VERSION = "0.16.0"
 EXT_ENDCORD_VERSION = "1.4.2"
 EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
@@ -667,6 +667,9 @@ class Extension:
             tui.screen.timeout(200)
             buf = tui.input_buffer
             start = tui.input_index
+            # dd — delete selected message
+            if next_key == ord('d') and tui.chat_selected != -1:
+                return 3
             # text objects: diw / daw
             if next_key in (ord('i'), ord('a')):
                 is_around = (next_key == ord('a'))
