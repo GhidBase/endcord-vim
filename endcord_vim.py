@@ -3,14 +3,15 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, version 3.
 
-"""Vim navigation: count-prefix j/k/J/K, Ctrl+U/D half-page, zt/zz/zb reposition, m/'/` marks, e/b/w/$//^ word motion, d operator."""
+"""Vim navigation: count-prefix j/k/J/K, Ctrl+U/D half-page, zt/zz/zb reposition, m/'/` marks, e/b/w/$//^ word motion, d operator, / tree search."""
 
+import curses
 import json
 import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.14.0"
+EXT_VERSION = "0.15.0"
 EXT_ENDCORD_VERSION = "1.4.2"
 EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
@@ -30,6 +31,7 @@ class Extension:
         app.tui.vim_count = 0
         app.tui.common_keybindings = self._common_keybindings
         self._marks = self._load_marks()
+        self._last_search = {"query": "", "matches": [], "idx": -1}
         logger.info("Vim navigation active")
 
     # ── marks persistence ────────────────────────────────────────────────────
@@ -124,6 +126,139 @@ class Extension:
             if obj and obj["type"] < 0 and obj["id"] not in collapsed:
                 collapsed.append(obj["id"])
         app.update_tree(collapsed=collapsed)
+
+    # ── tree search ──────────────────────────────────────────────────────────
+
+    def _find_visible_positions(self, tui):
+        """Walk tree_format and return [(vis_idx, obj), ...] for each visible item."""
+        if not tui.tree or not tui.tree_format:
+            return []
+        tree_metadata = self.app.tree_metadata
+        skip_folder = False
+        skip_guild = False
+        skip_category = False
+        skip_channel = False
+        result = []
+        vis_idx = 0
+        for abs_idx in range(len(tui.tree_format)):
+            code = tui.tree_format[abs_idx]
+            first_digit = code % 10
+            if code == 1000:
+                skip_folder = False
+                continue
+            elif code == 1100:
+                skip_guild = False
+                continue
+            elif code == 1200:
+                skip_category = False
+                continue
+            elif code == 1300:
+                skip_channel = False
+                continue
+            if skip_folder or skip_guild or skip_category or skip_channel:
+                continue
+            obj = tree_metadata[abs_idx] if abs_idx < len(tree_metadata) else None
+            result.append((vis_idx, obj))
+            vis_idx += 1
+            if first_digit == 0:
+                if code < 100:
+                    skip_folder = True
+                elif code < 200:
+                    skip_guild = True
+                elif code < 300:
+                    skip_category = True
+                elif 500 <= code <= 599:
+                    skip_channel = True
+        return result
+
+    def _tree_search_matches(self, tui, query):
+        """Return list of vis_idx values whose name contains query (case-insensitive)."""
+        if not query:
+            return []
+        q = query.lower()
+        return [
+            vis for vis, obj in self._find_visible_positions(tui)
+            if obj and obj.get("name") and q in obj["name"].lower()
+        ]
+
+    def _tree_nav_to(self, tui, vis_idx):
+        """Move tree cursor to vis_idx and scroll it into view."""
+        h = tui.tree_hw[0]
+        max_idx = max(0, tui.tree_clean_len - h)
+        tui.tree_selected = vis_idx
+        tui.tree_index = max(0, min(vis_idx - h // 2, max_idx))
+        tui.draw_tree()
+
+    def _search_step(self, tui, direction):
+        """Repeat last search, step direction (+1 = next, -1 = prev), scroll to match."""
+        ls = self._last_search
+        if not ls["query"]:
+            return
+        matches = self._tree_search_matches(tui, ls["query"])
+        if not matches:
+            return
+        ls["matches"] = matches
+        ls["idx"] = (ls["idx"] + direction) % len(matches)
+        self._tree_nav_to(tui, matches[ls["idx"]])
+
+    def _tree_search(self, tui):
+        """Interactive / search loop. Returns True if confirmed with Enter, False on Escape."""
+        app = self.app
+        query = ""
+        matches = []
+        match_idx = 0
+        orig_selected = tui.tree_selected
+        orig_index = tui.tree_index
+
+        while True:
+            status = f"/{query}"
+            if matches:
+                status += f"  [{match_idx + 1}/{len(matches)}]"
+            elif query:
+                status += "  [no match]"
+            app.extra_line = status
+            tui.draw_extra_line(status)
+
+            tui.screen.timeout(-1)
+            ch = tui.screen.getch()
+            tui.screen.timeout(200)
+
+            if ch == 27:  # Escape — cancel
+                tui.tree_selected = orig_selected
+                tui.tree_index = orig_index
+                tui.draw_tree()
+                app.update_extra_line()
+                return False
+
+            if ch in (10, 13):  # Enter — confirm
+                app.update_extra_line()
+                if matches:
+                    self._last_search = {"query": query, "matches": matches, "idx": match_idx}
+                return True
+
+            if ch in (127, 8, curses.KEY_BACKSPACE):  # Backspace
+                if query:
+                    query = query[:-1]
+                    matches = self._tree_search_matches(tui, query)
+                    match_idx = 0
+                    if matches:
+                        self._tree_nav_to(tui, matches[0])
+                    else:
+                        tui.tree_selected = orig_selected
+                        tui.tree_index = orig_index
+                        tui.draw_tree()
+                continue
+
+            if 32 <= ch <= 126:
+                query += chr(ch)
+                matches = self._tree_search_matches(tui, query)
+                match_idx = 0
+                if matches:
+                    self._tree_nav_to(tui, matches[0])
+                else:
+                    tui.tree_selected = orig_selected
+                    tui.tree_index = orig_index
+                    tui.draw_tree()
 
     # ── input word-motion helpers ─────────────────────────────────────────────
 
@@ -489,6 +624,18 @@ class Extension:
             tui.screen.timeout(200)
             if 97 <= next_key <= 122 or 65 <= next_key <= 90:
                 self._jump_mark_exact(chr(next_key))
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('/') and not tui.insert_mode:
+            self._tree_search(tui)
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('n') and not tui.insert_mode:
+            self._search_step(tui, +1)
+            return _VIM_SCROLL_CODE
+
+        elif key == ord('N') and not tui.insert_mode:
+            self._search_step(tui, -1)
             return _VIM_SCROLL_CODE
 
         elif key in tui.keybindings["word_right"] and not tui.insert_mode:

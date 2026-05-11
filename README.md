@@ -114,6 +114,21 @@ Marks are saved to `vim_marks.json` next to the extension file and persist acros
 
 ---
 
+### Channel tree search
+
+| Key | Action |
+|-----|--------|
+| `/` | Open incremental search prompt |
+| `Backspace` | Remove last character from query |
+| `Enter` | Confirm selection and exit search |
+| `Escape` | Cancel search and restore original position |
+| `n` | (outside search) Go to next match of last query |
+| `N` | (outside search) Go to previous match of last query |
+
+While the search prompt is open, typing filters by channel/guild/DM name (case-insensitive substring). The status line shows `/<query>  [match / total]`. After confirming, press `Enter` again (tree select) to open the highlighted channel. `n`/`N` outside the prompt repeat the last query and scroll the tree to show the match.
+
+---
+
 ### Other
 
 | Key | Action |
