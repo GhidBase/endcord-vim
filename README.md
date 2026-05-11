@@ -9,7 +9,7 @@ Requires `vim_mode: true` in your endcord config.
 Copy `endcord_vim.py` into your endcord extensions directory:
 
 ```
-~/.local/share/endcord/Extensions/endcord_vim/endcord_vim.py
+~/.config/endcord/Extensions/endcord_vim/endcord_vim.py
 ```
 
 ## Features
