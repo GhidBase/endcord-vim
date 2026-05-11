@@ -143,6 +143,7 @@ While the search prompt is open, typing filters by channel/guild/DM name (case-i
 
 | Key | Action |
 |-----|--------|
+| `y` | Yank (copy) the selected message text to clipboard |
 | `u` | Upload file (remaps the default `Ctrl+U` upload to `u` in normal mode) |
 | `Q` | Quit endcord |
 

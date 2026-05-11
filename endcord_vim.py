@@ -11,7 +11,7 @@ import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.18.0"
+EXT_VERSION = "0.19.0"
 EXT_ENDCORD_VERSION = "1.4.2"
 EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
@@ -775,6 +775,9 @@ class Extension:
                 self._skip_image_placeholders(tui, -1)
                 tui.draw_chat()
             return _VIM_SCROLL_CODE
+
+        elif key == ord('y') and not tui.insert_mode and tui.chat_selected >= 0:
+            return 12
 
         elif key in tui.keybindings["quit"]:
             return 34
