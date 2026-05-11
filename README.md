@@ -93,9 +93,17 @@ Ctrl+U/D skip over blank image placeholder lines inserted by image extensions.
 | `daw` | Delete a word (word + one adjacent space) |
 | `dd` | Delete all text in the input buffer |
 | `dm` | Delete the selected message (triggers endcord's confirmation prompt) |
+| `cw` | Delete to start of next word and enter insert mode |
+| `cb` | Delete to start of previous word and enter insert mode |
+| `ce` | Delete to end of word and enter insert mode |
+| `c$` | Delete to end of line and enter insert mode |
+| `c^` | Delete to first non-space and enter insert mode |
+| `ciw` | Delete inner word and enter insert mode |
+| `caw` | Delete a word (+ adjacent space) and enter insert mode |
+| `cc` | Clear input buffer and enter insert mode |
 
-**Count with `d`:** place a count before `d`, after `d`, or both — they multiply.  
-Examples: `2dw`, `d3w`, `2d3w` (deletes 6 words).
+**Count with `d`/`c`:** place a count before the operator, after it, or both — they multiply.  
+Examples: `2dw`, `d3w`, `2d3w` (deletes 6 words); same with `c`.
 
 ---
 

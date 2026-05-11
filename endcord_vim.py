@@ -11,7 +11,7 @@ import logging
 import os
 
 EXT_NAME = "Vim Navigation"
-EXT_VERSION = "0.17.0"
+EXT_VERSION = "0.18.0"
 EXT_ENDCORD_VERSION = "1.4.2"
 EXT_DESCRIPTION = "Vim-style navigation: count prefix, half/page scroll for chat+tree, zt/zz/zb/ZT/ZZ/ZB, marks."
 EXT_SOURCE = "https://github.com/ghidbase/endcord-vim"
@@ -311,6 +311,56 @@ class Extension:
             while end < len(buf) and buf[end] != ' ':
                 end += 1
         return start, end
+
+    def _apply_delete_motion(self, tui, next_key, count):
+        """Perform a d/c deletion motion already past the operator key.
+        Handles text objects (iw/aw) and word/line motions with count.
+        """
+        buf = tui.input_buffer
+        start = tui.input_index
+        if next_key in (ord('i'), ord('a')):
+            is_around = (next_key == ord('a'))
+            tui.screen.timeout(-1)
+            obj_key = tui.screen.getch()
+            tui.screen.timeout(200)
+            if obj_key == ord('w'):
+                ws, we = self._find_word_bounds(buf, start)
+                if is_around and start < len(buf) and buf[start] != ' ':
+                    if we < len(buf) and buf[we] == ' ':
+                        we += 1
+                    elif ws > 0 and buf[ws - 1] == ' ':
+                        ws -= 1
+                if we > ws:
+                    tui.input_buffer = buf[:ws] + buf[we:]
+                    self._apply_input_motion(tui, min(ws, len(tui.input_buffer)))
+            return
+        inner_count = 0
+        while ord('1') <= next_key <= ord('9') or (next_key == ord('0') and inner_count > 0):
+            inner_count = inner_count * 10 + (next_key - ord('0'))
+            tui.screen.timeout(-1)
+            next_key = tui.screen.getch()
+            tui.screen.timeout(200)
+        n = count * max(1, inner_count)
+        end = start
+        for _ in range(n):
+            if next_key in tui.keybindings["word_right"] or next_key == ord('w'):
+                end = self._word_forward(buf, end)
+            elif next_key in tui.keybindings["word_left"] or next_key == ord('b'):
+                end = self._word_backward(buf, end)
+            elif next_key == ord('e'):
+                end = self._word_end(buf, end)
+            else:
+                break
+        if next_key == ord('$'):
+            end = len(buf)
+        elif next_key == ord('^'):
+            end = 0
+            while end < len(buf) and buf[end] == ' ':
+                end += 1
+        if end != start:
+            lo, hi = min(start, end), max(start, end)
+            tui.input_buffer = buf[:lo] + buf[hi:]
+            self._apply_input_motion(tui, lo)
 
     def _apply_input_motion(self, tui, new_idx):
         """Set cursor to new_idx, update scroll + cursor_pos, and redraw input."""
@@ -665,62 +715,26 @@ class Extension:
             tui.screen.timeout(-1)
             next_key = tui.screen.getch()
             tui.screen.timeout(200)
-            buf = tui.input_buffer
-            start = tui.input_index
-            # dd — clear input buffer
             if next_key == ord('d'):
                 tui.input_buffer = ""
                 self._apply_input_motion(tui, 0)
                 return _VIM_SCROLL_CODE
-            # dm — delete selected message
             if next_key == ord('m') and tui.chat_selected != -1:
                 return 3
-            # text objects: diw / daw
-            if next_key in (ord('i'), ord('a')):
-                is_around = (next_key == ord('a'))
-                tui.screen.timeout(-1)
-                obj_key = tui.screen.getch()
-                tui.screen.timeout(200)
-                if obj_key == ord('w'):
-                    ws, we = self._find_word_bounds(buf, start)
-                    if is_around and start < len(buf) and buf[start] != ' ':
-                        if we < len(buf) and buf[we] == ' ':
-                            we += 1
-                        elif ws > 0 and buf[ws - 1] == ' ':
-                            ws -= 1
-                    if we > ws:
-                        tui.input_buffer = buf[:ws] + buf[we:]
-                        self._apply_input_motion(tui, min(ws, len(tui.input_buffer)))
-                return _VIM_SCROLL_CODE
-            # optional inner count (e.g. d2w)
-            inner_count = 0
-            while ord('1') <= next_key <= ord('9') or (next_key == ord('0') and inner_count > 0):
-                inner_count = inner_count * 10 + (next_key - ord('0'))
-                tui.screen.timeout(-1)
-                next_key = tui.screen.getch()
-                tui.screen.timeout(200)
-            n = count * max(1, inner_count)
-            end = start
-            for _ in range(n):
-                if next_key in tui.keybindings["word_right"] or next_key == ord('w'):
-                    end = self._word_forward(buf, end)
-                elif next_key in tui.keybindings["word_left"] or next_key == ord('b'):
-                    end = self._word_backward(buf, end)
-                elif next_key == ord('e'):
-                    end = self._word_end(buf, end)
-                else:
-                    break
-            if next_key == ord('$'):
-                end = len(buf)
-            elif next_key == ord('^'):
-                end = 0
-                while end < len(buf) and buf[end] == ' ':
-                    end += 1
-            if end != start:
-                lo, hi = min(start, end), max(start, end)
-                tui.input_buffer = buf[:lo] + buf[hi:]
-                self._apply_input_motion(tui, lo)
+            self._apply_delete_motion(tui, next_key, count)
             return _VIM_SCROLL_CODE
+
+        elif key == ord('c') and not tui.insert_mode:
+            tui.screen.timeout(-1)
+            next_key = tui.screen.getch()
+            tui.screen.timeout(200)
+            if next_key == ord('c'):
+                tui.input_buffer = ""
+                self._apply_input_motion(tui, 0)
+            else:
+                self._apply_delete_motion(tui, next_key, count)
+            tui.insert_mode = True
+            return 28
 
         elif key == ord('x') and not tui.insert_mode:
             buf = tui.input_buffer
